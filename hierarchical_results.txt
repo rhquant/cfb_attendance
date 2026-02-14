@@ -1,0 +1,246 @@
+
+======================================================================
+STEP 1: BASELINE MODEL
+======================================================================
+
+  Key Coefficients:
+  Variable                       Coeff    Std Err    p-value
+  -------------------------------------------------------
+  season_wins                   0.0068     0.0008     0.0000 ***
+  season_losses                -0.0157     0.0011     0.0000 ***
+  prior_season_win_pct          0.1110     0.0120     0.0000 ***
+  prior_season_att_rate         0.2053     0.0312     0.0000 ***
+  opponent_ranked               0.0423     0.0035     0.0000 ***
+  conference_game               0.0125     0.0044     0.0042 **
+
+  Baseline R-squared: 0.6677
+  Holdout MAE:  0.0669
+  Holdout MAPE: 8.36%
+  Holdout RMSE: 0.0937
+
+======================================================================
+STEP 2: SEQUENTIAL BLOCK ADDITION
+======================================================================
+
+--- Block A: Opponent Quality ---
+  R-squared: 0.6823  (delta: +0.0146)
+    marquee_noncon                      coeff=  0.0326  p=0.0000 ***
+    cupcake                             coeff= -0.0182  p=0.0021 **
+    expected_win_prob                   coeff=  0.0161  p=0.4270 
+    opponent_away_draw                  coeff=  0.4003  p=0.0000 ***
+  RECOMMEND: Retain marquee_noncon, cupcake, opponent_away_draw (delta R2=+0.0146)
+
+--- Block B: Schedule Factors ---
+  R-squared: 0.6851  (delta: +0.0028)
+    non_weekend_game                    coeff= -0.0201  p=0.0244 *
+    C(kickoff_time)[T.Evening]          coeff=  0.0139  p=0.0002 ***
+    C(kickoff_time)[T.Morning]          coeff= -0.0076  p=0.0581 
+    C(kickoff_time)[T.Night]            coeff=  0.0078  p=0.5628 
+    bye_week_before                     coeff= -0.0031  p=0.4663 
+  RECOMMEND: Retain non_weekend_game, C(kickoff_time) (delta R2=+0.0028)
+
+--- Block C: Coaching ---
+  R-squared: 0.6863  (delta: +0.0013)
+    new_coach                           coeff=  0.0083  p=0.0603 
+    interim_coach                       coeff= -0.0343  p=0.0011 **
+  RECOMMEND: Retain new_coach, interim_coach (delta R2=+0.0013)
+
+--- Block D: Weather ---
+  R-squared: 0.6892  (delta: +0.0029)
+    temperature                         coeff=  0.0004  p=0.0152 *
+    precip_severity                     coeff= -0.0108  p=0.0115 *
+    severe_weather                      coeff= -0.0374  p=0.0004 ***
+  RECOMMEND: Retain temperature, precip_severity, severe_weather (delta R2=+0.0029)
+
+--- Block E: Special Events ---
+  R-squared: 0.6921  (delta: +0.0029)
+    national_tv                         coeff=  0.0131  p=0.0014 **
+    new_conference                      coeff=  0.0820  p=0.0000 ***
+  RECOMMEND: Retain national_tv, new_conference (delta R2=+0.0029)
+
+--- Block F: Rivalry ---
+  R-squared: 0.7120  (delta: +0.0199)
+    rivalry                             coeff=  0.0685  p=0.0000 ***
+  RECOMMEND: Retain rivalry (delta R2=+0.0199)
+
+  Current formula after block addition:
+  R-squared: 0.7120
+
+======================================================================
+STEP 3: INTERACTION TERMS
+======================================================================
+
+--- Season losses x New coach ---
+  season_losses:new_coach: coeff=0.0006, SE=0.0019, p=0.7352 
+  Delta R2: +0.00001
+  RECOMMEND: Drop (negligible improvement)
+
+--- Season losses x Conference game ---
+  season_losses:conference_game: coeff=-0.0010, SE=0.0022, p=0.6431 
+  Delta R2: +0.00002
+  RECOMMEND: Drop (negligible improvement)
+
+--- Season losses x Rivalry ---
+  season_losses:rivalry: coeff=0.0101, SE=0.0025, p=0.0001 ***
+  Delta R2: +0.00272
+  RECOMMEND: Retain (significant interaction)
+
+======================================================================
+STEP 4: FINAL MODEL & DIAGNOSTICS
+======================================================================
+
+Final formula: attendance_rate ~ C(team) + C(season_str) + season_wins + season_losses + prior_season_win_pct + pri...
+
+  Full Coefficient Table (non-FE terms):
+  Variable                                      Coeff         SE    p-value   Sig
+  ---------------------------------------------------------------------------
+  Intercept                                    0.3568     0.0480     0.0000   ***
+  C(kickoff_time)[T.Evening]                   0.0166     0.0037     0.0000   ***
+  C(kickoff_time)[T.Morning]                  -0.0034     0.0040     0.3978      
+  C(kickoff_time)[T.Night]                     0.0128     0.0122     0.2931      
+  season_wins                                  0.0058     0.0009     0.0000   ***
+  season_losses                               -0.0177     0.0012     0.0000   ***
+  prior_season_win_pct                         0.1065     0.0113     0.0000   ***
+  prior_season_att_rate                        0.2208     0.0286     0.0000   ***
+  opponent_ranked                              0.0216     0.0035     0.0000   ***
+  conference_game                              0.0134     0.0058     0.0195     *
+  marquee_noncon                               0.0213     0.0071     0.0027    **
+  cupcake                                     -0.0146     0.0058     0.0118     *
+  opponent_away_draw                           0.2943     0.0428     0.0000   ***
+  non_weekend_game                            -0.0286     0.0085     0.0008   ***
+  new_coach                                    0.0090     0.0042     0.0315     *
+  interim_coach                               -0.0312     0.0103     0.0024    **
+  temperature                                  0.0004     0.0002     0.0336     *
+  precip_severity                             -0.0113     0.0041     0.0059    **
+  severe_weather                              -0.0346     0.0104     0.0008   ***
+  national_tv                                  0.0089     0.0040     0.0239     *
+  new_conference                               0.0880     0.0168     0.0000   ***
+  rivalry                                      0.0423     0.0073     0.0000   ***
+  season_losses:rivalry                        0.0101     0.0025     0.0001   ***
+
+  Holdout (2024) Metrics:
+    MAE:  0.0729
+    MAPE: 9.11%
+    RMSE: 0.0982
+    N:    428
+
+  Breusch-Pagan test: stat=565.17, p=0.0000
+  -> Heteroskedasticity detected (using HC3 robust SEs)
+
+  Variance Inflation Factors (non-FE variables):
+    season_wins                    VIF = 1.92
+    season_losses                  VIF = 1.60
+    prior_season_win_pct           VIF = 1.51
+    prior_season_att_rate          VIF = 1.34
+    opponent_ranked                VIF = 1.32
+    conference_game                VIF = 3.33
+    marquee_noncon                 VIF = 1.88
+    cupcake                        VIF = 2.12
+    opponent_away_draw             VIF = 1.17
+    non_weekend_game               VIF = 1.03
+    new_coach                      VIF = 1.18
+    interim_coach                  VIF = 1.11
+    temperature                    VIF = 1.84
+    precip_severity                VIF = 1.01
+    severe_weather                 VIF = 1.01
+    national_tv                    VIF = 1.53
+    new_conference                 VIF = 1.02
+    rivalry                        VIF = 1.13
+
+  Robustness Check: Capped attendance_rate at 1.0
+    Uncapped R2: 0.7148
+    Capped R2:   0.7082
+    Difference:  +0.0066
+
+======================================================================
+PREDICTIVE EXAMPLES
+======================================================================
+
+  Closest Predictions (2024 holdout):
+  Home                 Away                  Wk   Actual     Pred    Error
+  -------------------------------------------------------------------
+  South Carolina       Texas A&M             10    1.001    1.001   +0.000
+  Kentucky             South Carolina         2    1.006    1.005   -0.000
+  Wisconsin            Oregon                12    0.950    0.950   +0.000
+  Ohio State           Western Michigan       2    0.999    0.998   -0.001
+  Syracuse             Stanford               4    0.801    0.802   +0.001
+  Clemson              Stanford               5    0.985    0.984   -0.001
+  BYU                  Kansas State           4    1.012    1.010   -0.001
+  Nebraska             UCLA                  10    1.023    1.022   -0.002
+  West Virginia        Baylor                12    0.873    0.871   -0.002
+  Kansas State         Cincinnati            13    1.020    1.018   -0.002
+
+  Worst Predictions (2024 holdout):
+  Home                 Away                  Wk   Actual     Pred    Error
+  -------------------------------------------------------------------
+  Stanford             SMU                    8    0.379    0.780   +0.401
+  Stanford             Louisville            12    0.371    0.752   +0.381
+  Stanford             Cal Poly               2    0.449    0.818   +0.369
+  Florida State        Florida               14    0.819    1.143   +0.324
+  Stanford             Wake Forest            9    0.465    0.764   +0.299
+  Florida State        Boston College         1    0.769    1.067   +0.298
+  Florida State        Clemson                6    0.819    1.111   +0.292
+  Florida State        Charleston Southern   13    0.650    0.935   +0.286
+  Florida State        Memphis                3    0.819    1.089   +0.270
+  Florida State        California             4    0.819    1.085   +0.266
+
+  Scenario Analysis: Effect of Season Record
+  Coefficient on season_wins:         +0.0058
+  Coefficient on season_losses:       -0.0177
+  Coefficient on prior_season_att_rate: +0.2208
+
+  Marginal effect of one additional win:  +0.0058 (+0.6 pp)
+  Marginal effect of one additional loss: -0.0177 (-1.8 pp)
+  Asymmetry (|loss| - |win|):             +0.0119 pp
+
+  Record scenarios at Week 11 (holding other vars at mean):
+  Record        Wins  Losses   Win Effect   Loss Effect   Net vs 5-5
+  --------------------------------------------------------------
+  9-0              9       0      +0.0232       +0.0886      +0.1118
+  8-1              8       1      +0.0174       +0.0709      +0.0883
+  7-2              7       2      +0.0116       +0.0532      +0.0648
+  6-3              6       3      +0.0058       +0.0354      +0.0413
+  5-4              5       4      +0.0000       +0.0177      +0.0177
+  5-5              5       5      +0.0000       -0.0000      +0.0000
+  4-5              4       5      -0.0058       -0.0000      -0.0058
+  3-6              3       6      -0.0116       -0.0177      -0.0293
+  2-7              2       7      -0.0174       -0.0354      -0.0529
+  1-8              1       8      -0.0232       -0.0532      -0.0764
+
+  Prior season attendance rate effect:
+  If prior season att rate 0.98 -> 0.65 (FSU-type collapse):
+    Change: -0.0729 (-7.3 pp)
+  If prior season att rate 0.70 -> 0.95 (program revival):
+    Change: +0.0552 (+5.5 pp)
+
+======================================================================
+2025 FORWARD PREDICTIONS
+======================================================================
+  No 2025 games in dataset (season may not have started).
+
+  Saved model to C:\Users\tkasi\Documents\cfb_attendance\regression_model.pkl
+  Saved C:\Users\tkasi\Documents\cfb_attendance\model_diagnostics.png
+  Saved C:\Users\tkasi\Documents\cfb_attendance\coefficient_plots.png
+  Saved C:\Users\tkasi\Documents\cfb_attendance\variable_importance.png
+  Saved C:\Users\tkasi\Documents\cfb_attendance\actual_vs_predicted.png
+
+  Saved C:\Users\tkasi\Documents\cfb_attendance\hierarchical_results.txt
+
+======================================================================
+SUMMARY
+======================================================================
+  Dataset: 3947 observations, 67 teams, 9 seasons
+  Baseline R2:    0.6677
+  Final R2:       0.7148
+  Improvement:    +0.0470
+  Holdout MAE:    0.0729
+  Holdout RMSE:   0.0982
+
+  Artifacts saved:
+    - model_data.csv
+    - regression_model.pkl
+    - model_diagnostics.png
+    - coefficient_plots.png
+    - variable_importance.png
+    - actual_vs_predicted.png
+    - hierarchical_results.txt
