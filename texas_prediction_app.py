@@ -56,6 +56,7 @@ Z95 = 1.96                  # For approximate 95% prediction interval
 COLOR_PRIMARY = "#BF5700"   # burnt orange - 2026 predicted
 COLOR_SECONDARY = "#333F48" # charcoal - 2024 actual
 COLOR_GREY = "#D6D2C4"      # warm grey - CI lines / accents
+COLOR_COMPARE = "#4A90A4"   # steel blue - comparison scenario
 
 # Prior-season constants (2024 Texas season: 13-3 overall incl. postseason)
 PRIOR_SEASON_WIN_PCT = 13 / 16  # 0.8125
@@ -332,6 +333,22 @@ if reset_clicked:
         st.session_state[f"ranked_{wk}"] = meta["default_opp_ranked"]
     st.rerun()
 
+# ---- Scenario comparison toggle ----
+cmp_toggle_col, cmp_select_col = st.columns([2, 3])
+with cmp_toggle_col:
+    compare_mode = st.toggle("Compare to another scenario", key="compare_mode")
+if compare_mode:
+    compare_presets = [k for k in PRESETS if k != "Custom"]
+    with cmp_select_col:
+        compare_choice = st.selectbox(
+            "Compare scenario",
+            compare_presets,
+            key="compare_preset",
+            label_visibility="collapsed",
+        )
+else:
+    compare_choice = None
+
 # ---- Build wl + overrides from session state ----
 wl = {g["week"]: st.session_state.get(f"wl_{g['week']}", "W")
       for g in FULL_SCHEDULE}
@@ -346,6 +363,15 @@ for wk in HOME_WEEKS:
     overrides[f"ranked_{wk}"] = st.session_state.get(f"ranked_{wk}", meta["default_opp_ranked"])
     overrides[f"tv_{wk}"] = meta["default_tv"]
 
+# ---- Scenario B predictions (comparison mode) ----
+if compare_mode and compare_choice:
+    wl_b = PRESETS[compare_choice]
+    df_b = predict_all_games(wl_b, overrides)
+    total_wins_b = sum(1 for v in wl_b.values() if v == "W")
+    total_losses_b = len(wl_b) - total_wins_b
+else:
+    df_b = None
+
 # ---- Summary metrics (top of page) ----
 df = predict_all_games(wl, overrides)
 total_wins = sum(1 for v in wl.values() if v == "W")
@@ -357,10 +383,22 @@ avg_att_rate = df['Predicted Rate'].mean()
 
 with st.container(border=True):
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("**Total Season Attendance**", f"{df['Headcount'].sum():,.0f}")
-    col2.metric("Y/Y Total Attendance", f"{yoy_pct:+.1%}", delta=f"{df['Headcount'].sum() - prior_total:+,.0f}")
-    col3.metric("Avg Attendance Rate", f"{avg_att_rate:.1%}")
-    col4.metric("Projected Record", f"{total_wins}-{total_losses}")
+    if df_b is not None:
+        delta_att = int(df['Headcount'].sum() - df_b['Headcount'].sum())
+        col1.metric("**Total Season Attendance**", f"{df['Headcount'].sum():,.0f}",
+                     delta=f"{delta_att:+,} vs {compare_choice}")
+        yoy_pct_b = (df_b['Headcount'].sum() - prior_total) / prior_total
+        col2.metric("Y/Y Total Attendance", f"{yoy_pct:+.1%}",
+                     delta=f"{yoy_pct - yoy_pct_b:+.1%} vs {compare_choice}")
+        col3.metric("Avg Attendance Rate", f"{avg_att_rate:.1%}",
+                     delta=f"{avg_att_rate - df_b['Predicted Rate'].mean():+.1%} vs {compare_choice}")
+        col4.metric("Projected Record", f"{total_wins}-{total_losses}",
+                     delta=f"vs {total_wins_b}-{total_losses_b}")
+    else:
+        col1.metric("**Total Season Attendance**", f"{df['Headcount'].sum():,.0f}")
+        col2.metric("Y/Y Total Attendance", f"{yoy_pct:+.1%}", delta=f"{df['Headcount'].sum() - prior_total:+,.0f}")
+        col3.metric("Avg Attendance Rate", f"{avg_att_rate:.1%}")
+        col4.metric("Projected Record", f"{total_wins}-{total_losses}")
 
 st.markdown('<div class="section-spacer"></div>', unsafe_allow_html=True)
 
@@ -484,6 +522,18 @@ chart_combined = pd.concat([
     prior_df[["Game", "Opponent", "Cumulative", "Game Attendance", "Series"]],
 ], ignore_index=True)
 
+# Add Scenario B cumulative if comparing
+if df_b is not None:
+    cumul_b = df_b[["Week", "Opponent", "Headcount"]].copy()
+    cumul_b["Cumulative"] = cumul_b["Headcount"].cumsum()
+    cumul_b["Game"] = (cumul_b.index + 1).astype(int)
+    cumul_b["Series"] = f"2026 {compare_choice}"
+    cumul_b["Game Attendance"] = cumul_b["Headcount"]
+    chart_combined = pd.concat([
+        chart_combined,
+        cumul_b[["Game", "Opponent", "Cumulative", "Game Attendance", "Series"]],
+    ], ignore_index=True)
+
 # Also need CI data keyed by Game number
 ci_df = cumul_df[["Game", "Cumul Low 95%", "Cumul High 95%"]].copy()
 
@@ -504,8 +554,12 @@ lines = (
         color=alt.Color(
             "Series:N",
             scale=alt.Scale(
-                domain=["2026 Projected", "2024 Actual"],
-                range=[COLOR_PRIMARY, COLOR_SECONDARY],
+                domain=(["2026 Projected", f"2026 {compare_choice}", "2024 Actual"]
+                        if df_b is not None
+                        else ["2026 Projected", "2024 Actual"]),
+                range=([COLOR_PRIMARY, COLOR_COMPARE, COLOR_SECONDARY]
+                       if df_b is not None
+                       else [COLOR_PRIMARY, COLOR_SECONDARY]),
             ),
             legend=alt.Legend(title=None, orient="top"),
         ),
@@ -561,6 +615,19 @@ st.caption(
     f"Stadium capacity: {CAPACITY:,}. "
     "Dotted lines show the range where we expect actual attendance to fall 95% of the time."
 )
+
+if df_b is not None:
+    delta_total = int(df['Headcount'].sum() - df_b['Headcount'].sum())
+    game_deltas = df[['Week', 'Opponent', 'Headcount']].copy()
+    game_deltas['Delta'] = df['Headcount'].values - df_b['Headcount'].values
+    max_row = game_deltas.loc[game_deltas['Delta'].abs().idxmax()]
+    direction = "more" if delta_total > 0 else "fewer"
+    st.markdown(
+        f"Your scenario draws **{abs(delta_total):,} {direction}** fans "
+        f"than {compare_choice} across 7 home games. "
+        f"Largest swing: Week {int(max_row['Week'])} vs {max_row['Opponent']} "
+        f"({int(max_row['Delta']):+,})."
+    )
 
 # ---- Model details expander ----
 with st.expander("About this forecast"):
