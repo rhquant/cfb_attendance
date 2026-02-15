@@ -41,6 +41,15 @@ st.markdown("""
 
     /* Spacing between major sections */
     .section-spacer { margin-top: 2rem; }
+
+    /* Compact selectbox text so it doesn't clip in narrow columns */
+    [data-testid="stSelectbox"] [data-baseweb="select"] {
+        font-size: 0.78rem;
+        min-height: 1.8rem;
+    }
+    [data-testid="stSelectbox"] [data-baseweb="select"] > div {
+        padding: 2px 8px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -402,93 +411,8 @@ with st.container(border=True):
 
 st.markdown('<div class="section-spacer"></div>', unsafe_allow_html=True)
 
-# ---- Schedule table ----
-st.markdown("### 2026 Season Schedule")
-st.caption(
-    f"Darrell K Royal-Texas Memorial Stadium · Capacity: {CAPACITY:,} · "
-    f"Attendance Record: {STADIUM_RECORD:,} (vs Georgia, 2024)"
-)
-
-# Column widths: W/L | Opponent | Kickoff | Weather | Temp | Ranked | Pred. Att.
-W = [0.5, 2.2, 1.2, 1.2, 0.8, 0.7, 1.4]
-
-# Header
-hdr = st.columns(W)
-for col, label in zip(hdr, ["W/L", "Opponent", "Kickoff", "Weather",
-                             "Temp (\u00b0F)", "Ranked", "Pred. Att."]):
-    col.markdown(f"**{label}**")
-
-# Rows
-for game in FULL_SCHEDULE:
-    wk = game["week"]
-    is_home = game["location"] == "home"
-    cols = st.columns(W)
-
-    # -- W/L (all games) --
-    cols[0].selectbox(
-        f"wl {wk}", ["W", "L"], key=f"wl_{wk}",
-        label_visibility="collapsed",
-    )
-
-    # -- Opponent --
-    loc_tag = {"home": "vs", "away": "@", "neutral": "vs (N)"}[game["location"]]
-    if is_home:
-        cols[1].markdown(
-            f"**Wk {wk}** &nbsp; vs {game['opponent']}<br>"
-            f"<span style='font-size:0.85em;color:#666'>{HOME_GAMES[wk]['date']}</span>",
-            unsafe_allow_html=True,
-        )
-    else:
-        cols[1].markdown(
-            f"<span style='color:#888'>Wk {wk} &nbsp; {loc_tag} {game['opponent']}</span>",
-            unsafe_allow_html=True,
-        )
-
-    if is_home:
-        meta = HOME_GAMES[wk]
-
-        # -- Kickoff --
-        cols[2].selectbox(
-            f"kick {wk}", KICKOFF_OPTIONS, key=f"kick_{wk}",
-            label_visibility="collapsed",
-        )
-        # -- Weather --
-        cols[3].selectbox(
-            f"weather {wk}", WEATHER_OPTIONS, key=f"weather_{wk}",
-            label_visibility="collapsed",
-        )
-        # -- Temp --
-        cols[4].number_input(
-            f"temp {wk}", min_value=30, max_value=110, key=f"temp_{wk}",
-            label_visibility="collapsed",
-        )
-        # -- Ranked --
-        cols[5].checkbox(
-            f"ranked {wk}", key=f"ranked_{wk}",
-            label_visibility="collapsed",
-        )
-        # -- Predicted attendance --
-        fv = build_feature_vector(wk, meta, overrides, wl)
-        pred_rate = predict_attendance(fv, COEFFS)
-        headcount = int(round(pred_rate * CAPACITY))
-        if headcount > STADIUM_RECORD:
-            badge = ' <span title="Projected stadium record" style="font-size:0.75em;background:#BF5700;color:#fff;padding:1px 5px;border-radius:3px;margin-left:4px">RECORD</span>'
-        elif headcount > CAPACITY:
-            badge = ' <span title="Above capacity" style="font-size:0.75em;background:#333F48;color:#fff;padding:1px 5px;border-radius:3px;margin-left:4px">SELLOUT+</span>'
-        else:
-            badge = ""
-        cols[6].markdown(
-            f'<span class="att-home">{headcount:,}</span>{badge}',
-            unsafe_allow_html=True,
-        )
-    else:
-        for c in (2, 3, 4, 5, 6):
-            cols[c].markdown('<span class="att-away">--</span>',
-                             unsafe_allow_html=True)
-
-# ---- Cumulative attendance line chart ----
-st.markdown('<div class="section-spacer"></div>', unsafe_allow_html=True)
-st.markdown("### Cumulative Home Attendance")
+# ---- Chart data prep (before layout) ----
+import altair as alt
 
 # 2026 predicted cumulative
 cumul_df = df[["Week", "Opponent", "Headcount", "Low 95%", "High 95%"]].copy()
@@ -498,7 +422,6 @@ cumul_df["Cumul High 95%"] = cumul_df["High 95%"].cumsum()
 cumul_df["Game"] = (cumul_df.index + 1).astype(int)
 cumul_df["Series"] = "2026 Projected"
 
-# 2024 actual cumulative
 ACTUAL_2024 = [
     {"Game": 1, "Opponent": "Colorado State",    "Attendance": 99_171},
     {"Game": 2, "Opponent": "UTSA",              "Attendance": 101_892},
@@ -512,17 +435,13 @@ prior_df = pd.DataFrame(ACTUAL_2024)
 prior_df["Cumulative"] = prior_df["Attendance"].cumsum()
 prior_df["Series"] = "2024 Actual"
 prior_df["Game Attendance"] = prior_df["Attendance"]
-
-# Add per-game attendance to 2026 data for tooltip
 cumul_df["Game Attendance"] = cumul_df["Headcount"]
 
-# Combine for charting
 chart_combined = pd.concat([
     cumul_df[["Game", "Opponent", "Cumulative", "Game Attendance", "Series"]],
     prior_df[["Game", "Opponent", "Cumulative", "Game Attendance", "Series"]],
 ], ignore_index=True)
 
-# Add Scenario B cumulative if comparing
 if df_b is not None:
     cumul_b = df_b[["Week", "Opponent", "Headcount"]].copy()
     cumul_b["Cumulative"] = cumul_b["Headcount"].cumsum()
@@ -534,10 +453,8 @@ if df_b is not None:
         cumul_b[["Game", "Opponent", "Cumulative", "Game Attendance", "Series"]],
     ], ignore_index=True)
 
-# Also need CI data keyed by Game number
 ci_df = cumul_df[["Game", "Cumul Low 95%", "Cumul High 95%"]].copy()
 
-# Build delta-from-2024 data
 actual_values = [g["Attendance"] for g in ACTUAL_2024]
 delta_rows = []
 for i, row in cumul_df.iterrows():
@@ -567,8 +484,6 @@ if df_b is not None:
 else:
     delta_combined = delta_df
 
-import altair as alt
-
 # -- Shared encoding helpers --
 color_domain = (["2026 Projected", f"2026 {compare_choice}", "2024 Actual"]
                 if df_b is not None
@@ -576,26 +491,20 @@ color_domain = (["2026 Projected", f"2026 {compare_choice}", "2024 Actual"]
 color_range = ([COLOR_PRIMARY, COLOR_COMPARE, COLOR_SECONDARY]
                if df_b is not None
                else [COLOR_PRIMARY, COLOR_SECONDARY])
+x_axis = alt.X("Game:O", title="Home Game #", axis=alt.Axis(labelAngle=0))
 
-x_axis = alt.X("Game:O", title="Home Game #",
-               axis=alt.Axis(labelAngle=0))
-
-# =============================================
-# LEFT CHART: Cumulative season total (zero=False)
-# =============================================
-lines = (
+# -- Cumulative chart --
+cumul_lines = (
     alt.Chart(chart_combined)
-    .mark_line(point=alt.OverlayMarkDef(size=50), strokeWidth=2.5)
+    .mark_line(point=alt.OverlayMarkDef(size=40), strokeWidth=2.5)
     .encode(
         x=x_axis,
         y=alt.Y("Cumulative:Q", title="Cumulative Attendance",
                 scale=alt.Scale(zero=False),
                 axis=alt.Axis(format=",.0f")),
-        color=alt.Color(
-            "Series:N",
+        color=alt.Color("Series:N",
             scale=alt.Scale(domain=color_domain, range=color_range),
-            legend=alt.Legend(title=None, orient="top"),
-        ),
+            legend=alt.Legend(title=None, orient="top")),
         tooltip=[
             alt.Tooltip("Series:N"),
             alt.Tooltip("Opponent:N"),
@@ -605,63 +514,41 @@ lines = (
         ],
     )
 )
-
-# Data labels on 2026 predicted line (smaller for half-width)
 label_df = cumul_df[["Game", "Cumulative"]].copy()
-data_labels = (
+cumul_labels = (
     alt.Chart(label_df)
-    .mark_text(dy=-12, fontSize=9, fontWeight="bold", color=COLOR_PRIMARY)
-    .encode(
-        x=alt.X("Game:O"),
-        y=alt.Y("Cumulative:Q"),
-        text=alt.Text("Cumulative:Q", format=",.0f"),
-    )
+    .mark_text(dy=-10, fontSize=8, fontWeight="bold", color=COLOR_PRIMARY)
+    .encode(x=alt.X("Game:O"), y=alt.Y("Cumulative:Q"),
+            text=alt.Text("Cumulative:Q", format=",.0f"))
 )
+ci_high = (alt.Chart(ci_df).mark_line(strokeDash=[4, 4], color=COLOR_GREY, strokeWidth=1)
+           .encode(x=alt.X("Game:O"), y=alt.Y("Cumul High 95%:Q")))
+ci_low = (alt.Chart(ci_df).mark_line(strokeDash=[4, 4], color=COLOR_GREY, strokeWidth=1)
+          .encode(x=alt.X("Game:O"), y=alt.Y("Cumul Low 95%:Q")))
 
-ci_high = (
-    alt.Chart(ci_df)
-    .mark_line(strokeDash=[4, 4], color=COLOR_GREY, strokeWidth=1.2)
-    .encode(x=alt.X("Game:O"), y=alt.Y("Cumul High 95%:Q"))
-)
-ci_low = (
-    alt.Chart(ci_df)
-    .mark_line(strokeDash=[4, 4], color=COLOR_GREY, strokeWidth=1.2)
-    .encode(x=alt.X("Game:O"), y=alt.Y("Cumul Low 95%:Q"))
-)
-
-cumul_chart = (lines + data_labels + ci_high + ci_low).properties(
-    width="container", height=370,
+cumul_chart = (cumul_lines + cumul_labels + ci_high + ci_low).properties(
+    width="container", height=280,
 ).configure_view(strokeWidth=0)
 
-# =============================================
-# RIGHT CHART: Ahead / behind 2024
-# =============================================
-# Color scale for delta chart (no 2024 Actual line — it's the zero baseline)
+# -- Delta chart --
 delta_domain = (["2026 Projected", f"2026 {compare_choice}"]
-                if df_b is not None
-                else ["2026 Projected"])
+                if df_b is not None else ["2026 Projected"])
 delta_range = ([COLOR_PRIMARY, COLOR_COMPARE]
-               if df_b is not None
-               else [COLOR_PRIMARY])
+               if df_b is not None else [COLOR_PRIMARY])
 
-zero_line = (
-    alt.Chart(pd.DataFrame({"y": [0]}))
-    .mark_rule(strokeDash=[4, 4], color=COLOR_GREY, strokeWidth=1.2)
-    .encode(y="y:Q")
-)
-
+zero_line = (alt.Chart(pd.DataFrame({"y": [0]}))
+             .mark_rule(strokeDash=[4, 4], color=COLOR_GREY, strokeWidth=1)
+             .encode(y="y:Q"))
 delta_lines = (
     alt.Chart(delta_combined)
-    .mark_line(point=alt.OverlayMarkDef(size=50), strokeWidth=2.5)
+    .mark_line(point=alt.OverlayMarkDef(size=40), strokeWidth=2.5)
     .encode(
         x=x_axis,
         y=alt.Y("Cumulative Delta:Q", title="+/\u2212 Fans vs 2024",
                 axis=alt.Axis(format=",.0f")),
-        color=alt.Color(
-            "Series:N",
+        color=alt.Color("Series:N",
             scale=alt.Scale(domain=delta_domain, range=delta_range),
-            legend=alt.Legend(title=None, orient="top"),
-        ),
+            legend=alt.Legend(title=None, orient="top")),
         tooltip=[
             alt.Tooltip("Series:N"),
             alt.Tooltip("Opponent:N"),
@@ -671,52 +558,106 @@ delta_lines = (
         ],
     )
 )
-
-# Data labels on delta chart
 delta_label_df = delta_df[["Game", "Cumulative Delta"]].copy()
 delta_labels = (
     alt.Chart(delta_label_df)
-    .mark_text(dy=-12, fontSize=9, fontWeight="bold", color=COLOR_PRIMARY)
-    .encode(
-        x=alt.X("Game:O"),
-        y=alt.Y("Cumulative Delta:Q"),
-        text=alt.Text("Cumulative Delta:Q", format="+,"),
-    )
+    .mark_text(dy=-10, fontSize=8, fontWeight="bold", color=COLOR_PRIMARY)
+    .encode(x=alt.X("Game:O"), y=alt.Y("Cumulative Delta:Q"),
+            text=alt.Text("Cumulative Delta:Q", format="+,"))
 )
-
 delta_layers = zero_line + delta_lines + delta_labels
 if df_b is not None:
     delta_b_label_df = delta_b_df[["Game", "Cumulative Delta"]].copy()
     delta_b_labels = (
         alt.Chart(delta_b_label_df)
-        .mark_text(dy=16, fontSize=9, fontWeight="bold", color=COLOR_COMPARE)
-        .encode(
-            x=alt.X("Game:O"),
-            y=alt.Y("Cumulative Delta:Q"),
-            text=alt.Text("Cumulative Delta:Q", format="+,"),
-        )
+        .mark_text(dy=14, fontSize=8, fontWeight="bold", color=COLOR_COMPARE)
+        .encode(x=alt.X("Game:O"), y=alt.Y("Cumulative Delta:Q"),
+                text=alt.Text("Cumulative Delta:Q", format="+,"))
     )
     delta_layers = delta_layers + delta_b_labels
 
 delta_chart = delta_layers.properties(
-    width="container", height=370,
+    width="container", height=280,
 ).configure_view(strokeWidth=0)
 
-# =============================================
-# Render side by side
-# =============================================
-chart_left, chart_right = st.columns(2)
-with chart_left:
-    st.markdown("**Season Total**")
+# ---- Schedule table + charts side by side ----
+table_col, divider_col, chart_col = st.columns([3, 0.03, 2])
+
+with table_col:
+    st.markdown("### 2026 Season Schedule")
+    st.caption(
+        f"Darrell K Royal-Texas Memorial Stadium · Capacity: {CAPACITY:,} · "
+        f"Attendance Record: {STADIUM_RECORD:,} (vs Georgia, 2024)"
+    )
+
+    W = [0.65, 1.65, 1.6, 1.2, 0.8, 0.7, 1.4]
+    hdr = st.columns(W)
+    for col, label in zip(hdr, ["W/L", "Opponent", "Kickoff", "Weather",
+                                 "Temp (\u00b0F)", "Ranked", "Pred. Att."]):
+        col.markdown(f"**{label}**")
+
+    for game in FULL_SCHEDULE:
+        wk = game["week"]
+        is_home = game["location"] == "home"
+        cols = st.columns(W)
+
+        cols[0].selectbox(
+            f"wl {wk}", ["W", "L"], key=f"wl_{wk}",
+            label_visibility="collapsed",
+        )
+
+        loc_tag = {"home": "vs", "away": "@", "neutral": "vs (N)"}[game["location"]]
+        if is_home:
+            cols[1].markdown(
+                f"**Wk {wk}** &nbsp; vs {game['opponent']}<br>"
+                f"<span style='font-size:0.85em;color:#666'>{HOME_GAMES[wk]['date']}</span>",
+                unsafe_allow_html=True,
+            )
+        else:
+            cols[1].markdown(
+                f"<span style='color:#888'>Wk {wk} &nbsp; {loc_tag} {game['opponent']}</span>",
+                unsafe_allow_html=True,
+            )
+
+        if is_home:
+            meta = HOME_GAMES[wk]
+            cols[2].selectbox(f"kick {wk}", KICKOFF_OPTIONS, key=f"kick_{wk}",
+                              label_visibility="collapsed")
+            cols[3].selectbox(f"weather {wk}", WEATHER_OPTIONS, key=f"weather_{wk}",
+                              label_visibility="collapsed")
+            cols[4].number_input(f"temp {wk}", min_value=30, max_value=110,
+                                 key=f"temp_{wk}", label_visibility="collapsed")
+            cols[5].checkbox(f"ranked {wk}", key=f"ranked_{wk}",
+                             label_visibility="collapsed")
+            fv = build_feature_vector(wk, meta, overrides, wl)
+            pred_rate = predict_attendance(fv, COEFFS)
+            headcount = int(round(pred_rate * CAPACITY))
+            if headcount > STADIUM_RECORD:
+                badge = ' <span title="Projected stadium record" style="font-size:0.75em;background:#BF5700;color:#fff;padding:1px 5px;border-radius:3px;margin-left:4px">RECORD</span>'
+            elif headcount > CAPACITY:
+                badge = ' <span title="Above capacity" style="font-size:0.75em;background:#333F48;color:#fff;padding:1px 5px;border-radius:3px;margin-left:4px">SELLOUT+</span>'
+            else:
+                badge = ""
+            cols[6].markdown(
+                f'<span class="att-home">{headcount:,}</span>{badge}',
+                unsafe_allow_html=True,
+            )
+        else:
+            for c in (2, 3, 4, 5, 6):
+                cols[c].markdown('<span class="att-away">--</span>',
+                                 unsafe_allow_html=True)
+
+with divider_col:
+    st.markdown(
+        '<div style="border-left: 2px solid #D6D2C4; min-height: 700px;"></div>',
+        unsafe_allow_html=True,
+    )
+
+with chart_col:
+    st.markdown("**Cumulative Home Attendance**")
     st.altair_chart(cumul_chart, use_container_width=True)
-with chart_right:
     st.markdown("**Attendance vs 2024**")
     st.altair_chart(delta_chart, use_container_width=True)
-
-st.caption(
-    f"Stadium capacity: {CAPACITY:,}. "
-    "Dotted lines show the range where we expect actual attendance to fall 95% of the time."
-)
 
 if df_b is not None:
     delta_total = int(df['Headcount'].sum() - df_b['Headcount'].sum())
@@ -730,6 +671,7 @@ if df_b is not None:
         f"Largest swing: Week {int(max_row['Week'])} vs {max_row['Opponent']} "
         f"({int(max_row['Delta']):+,})."
     )
+
 
 # ---- Model details expander ----
 with st.expander("About this forecast"):
