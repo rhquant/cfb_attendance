@@ -537,30 +537,63 @@ if df_b is not None:
 # Also need CI data keyed by Game number
 ci_df = cumul_df[["Game", "Cumul Low 95%", "Cumul High 95%"]].copy()
 
+# Build delta-from-2024 data
+actual_values = [g["Attendance"] for g in ACTUAL_2024]
+delta_rows = []
+for i, row in cumul_df.iterrows():
+    delta_rows.append({
+        "Game": int(row["Game"]),
+        "Opponent": row["Opponent"],
+        "Delta": int(row["Headcount"]) - actual_values[i],
+        "Game Attendance": int(row["Headcount"]),
+        "Series": "2026 Projected",
+    })
+delta_df = pd.DataFrame(delta_rows)
+delta_df["Cumulative Delta"] = delta_df["Delta"].cumsum()
+
+if df_b is not None:
+    delta_b_rows = []
+    for i, row in df_b.iterrows():
+        delta_b_rows.append({
+            "Game": i + 1,
+            "Opponent": row["Opponent"],
+            "Delta": int(row["Headcount"]) - actual_values[i],
+            "Game Attendance": int(row["Headcount"]),
+            "Series": f"2026 {compare_choice}",
+        })
+    delta_b_df = pd.DataFrame(delta_b_rows)
+    delta_b_df["Cumulative Delta"] = delta_b_df["Delta"].cumsum()
+    delta_combined = pd.concat([delta_df, delta_b_df], ignore_index=True)
+else:
+    delta_combined = delta_df
+
 import altair as alt
+
+# -- Shared encoding helpers --
+color_domain = (["2026 Projected", f"2026 {compare_choice}", "2024 Actual"]
+                if df_b is not None
+                else ["2026 Projected", "2024 Actual"])
+color_range = ([COLOR_PRIMARY, COLOR_COMPARE, COLOR_SECONDARY]
+               if df_b is not None
+               else [COLOR_PRIMARY, COLOR_SECONDARY])
 
 x_axis = alt.X("Game:O", title="Home Game #",
                axis=alt.Axis(labelAngle=0))
 
-# Main lines (2026 predicted + 2024 actual)
+# =============================================
+# LEFT CHART: Cumulative season total (zero=False)
+# =============================================
 lines = (
     alt.Chart(chart_combined)
-    .mark_line(point=alt.OverlayMarkDef(size=60), strokeWidth=2.5)
+    .mark_line(point=alt.OverlayMarkDef(size=50), strokeWidth=2.5)
     .encode(
         x=x_axis,
         y=alt.Y("Cumulative:Q", title="Cumulative Attendance",
-                scale=alt.Scale(zero=True),
-                axis=alt.Axis(format="~s")),
+                scale=alt.Scale(zero=False),
+                axis=alt.Axis(format=",.0f")),
         color=alt.Color(
             "Series:N",
-            scale=alt.Scale(
-                domain=(["2026 Projected", f"2026 {compare_choice}", "2024 Actual"]
-                        if df_b is not None
-                        else ["2026 Projected", "2024 Actual"]),
-                range=([COLOR_PRIMARY, COLOR_COMPARE, COLOR_SECONDARY]
-                       if df_b is not None
-                       else [COLOR_PRIMARY, COLOR_SECONDARY]),
-            ),
+            scale=alt.Scale(domain=color_domain, range=color_range),
             legend=alt.Legend(title=None, orient="top"),
         ),
         tooltip=[
@@ -573,11 +606,11 @@ lines = (
     )
 )
 
-# Data labels on 2026 predicted line
+# Data labels on 2026 predicted line (smaller for half-width)
 label_df = cumul_df[["Game", "Cumulative"]].copy()
 data_labels = (
     alt.Chart(label_df)
-    .mark_text(dy=-14, fontSize=11, fontWeight="bold", color=COLOR_PRIMARY)
+    .mark_text(dy=-12, fontSize=9, fontWeight="bold", color=COLOR_PRIMARY)
     .encode(
         x=alt.X("Game:O"),
         y=alt.Y("Cumulative:Q"),
@@ -585,31 +618,100 @@ data_labels = (
     )
 )
 
-# 95% CI upper bound (dotted)
 ci_high = (
     alt.Chart(ci_df)
     .mark_line(strokeDash=[4, 4], color=COLOR_GREY, strokeWidth=1.2)
-    .encode(
-        x=alt.X("Game:O"),
-        y=alt.Y("Cumul High 95%:Q"),
-    )
+    .encode(x=alt.X("Game:O"), y=alt.Y("Cumul High 95%:Q"))
 )
-
-# 95% CI lower bound (dotted)
 ci_low = (
     alt.Chart(ci_df)
     .mark_line(strokeDash=[4, 4], color=COLOR_GREY, strokeWidth=1.2)
-    .encode(
-        x=alt.X("Game:O"),
-        y=alt.Y("Cumul Low 95%:Q"),
-    )
+    .encode(x=alt.X("Game:O"), y=alt.Y("Cumul Low 95%:Q"))
 )
 
 cumul_chart = (lines + data_labels + ci_high + ci_low).properties(
-    width="container", height=420,
+    width="container", height=370,
 ).configure_view(strokeWidth=0)
 
-st.altair_chart(cumul_chart, use_container_width=True)
+# =============================================
+# RIGHT CHART: Ahead / behind 2024
+# =============================================
+# Color scale for delta chart (no 2024 Actual line — it's the zero baseline)
+delta_domain = (["2026 Projected", f"2026 {compare_choice}"]
+                if df_b is not None
+                else ["2026 Projected"])
+delta_range = ([COLOR_PRIMARY, COLOR_COMPARE]
+               if df_b is not None
+               else [COLOR_PRIMARY])
+
+zero_line = (
+    alt.Chart(pd.DataFrame({"y": [0]}))
+    .mark_rule(strokeDash=[4, 4], color=COLOR_GREY, strokeWidth=1.2)
+    .encode(y="y:Q")
+)
+
+delta_lines = (
+    alt.Chart(delta_combined)
+    .mark_line(point=alt.OverlayMarkDef(size=50), strokeWidth=2.5)
+    .encode(
+        x=x_axis,
+        y=alt.Y("Cumulative Delta:Q", title="+/\u2212 Fans vs 2024",
+                axis=alt.Axis(format=",.0f")),
+        color=alt.Color(
+            "Series:N",
+            scale=alt.Scale(domain=delta_domain, range=delta_range),
+            legend=alt.Legend(title=None, orient="top"),
+        ),
+        tooltip=[
+            alt.Tooltip("Series:N"),
+            alt.Tooltip("Opponent:N"),
+            alt.Tooltip("Game Attendance:Q", format=",", title="Game Attendance"),
+            alt.Tooltip("Cumulative Delta:Q", format="+,", title="vs 2024"),
+            alt.Tooltip("Game:O", title="Home Game #"),
+        ],
+    )
+)
+
+# Data labels on delta chart
+delta_label_df = delta_df[["Game", "Cumulative Delta"]].copy()
+delta_labels = (
+    alt.Chart(delta_label_df)
+    .mark_text(dy=-12, fontSize=9, fontWeight="bold", color=COLOR_PRIMARY)
+    .encode(
+        x=alt.X("Game:O"),
+        y=alt.Y("Cumulative Delta:Q"),
+        text=alt.Text("Cumulative Delta:Q", format="+,"),
+    )
+)
+
+delta_layers = zero_line + delta_lines + delta_labels
+if df_b is not None:
+    delta_b_label_df = delta_b_df[["Game", "Cumulative Delta"]].copy()
+    delta_b_labels = (
+        alt.Chart(delta_b_label_df)
+        .mark_text(dy=16, fontSize=9, fontWeight="bold", color=COLOR_COMPARE)
+        .encode(
+            x=alt.X("Game:O"),
+            y=alt.Y("Cumulative Delta:Q"),
+            text=alt.Text("Cumulative Delta:Q", format="+,"),
+        )
+    )
+    delta_layers = delta_layers + delta_b_labels
+
+delta_chart = delta_layers.properties(
+    width="container", height=370,
+).configure_view(strokeWidth=0)
+
+# =============================================
+# Render side by side
+# =============================================
+chart_left, chart_right = st.columns(2)
+with chart_left:
+    st.markdown("**Season Total**")
+    st.altair_chart(cumul_chart, use_container_width=True)
+with chart_right:
+    st.markdown("**Attendance vs 2024**")
+    st.altair_chart(delta_chart, use_container_width=True)
 
 st.caption(
     f"Stadium capacity: {CAPACITY:,}. "
